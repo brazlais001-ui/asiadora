@@ -37,7 +37,7 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.7.0',
+  version: '1.8.0',
   name: 'Doramas Ásia',
   description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
@@ -78,32 +78,33 @@ function buildRpdbPoster(mediaType, mediaId) {
   return RPDB_BASE + '/' + RPDB_API_KEY + '/' + mediaType + '/poster-default/' + mediaId + '.jpg?fallback=true';
 }
 
-async function translateToPtBR(text) {
-  if (!text || text.length < 12 || !OPENROUTER_API_KEY) return text;
-  try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://stremio.com',
-        'X-Title': 'Doramas Addon',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.0-flash-exp:free',
-        messages: [
-          { role: 'system', content: 'Traduza para português brasileiro (pt-BR). Responda APENAS com a tradução, sem aspas ou explicações.' },
-          { role: 'user', content: text },
-        ],
-      }),
-    });
-    if (!res.ok) return text;
-    const data = await res.json();
-    const translated = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-    return translated ? translated.trim() : text;
-  } catch (e) {
-    return text;
+async function translateToPtBR(text, retries = 2) {
+  if (!text || text.length < 10 || !OPENROUTER_API_KEY) return text;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://stremio.com',
+          'X-Title': 'Doramas Addon',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-exp:free',
+          messages: [
+            { role: 'system', content: 'Traduza para português brasileiro (pt-BR) de forma natural. Responda APENAS com a tradução, sem aspas ou explicações.' },
+            { role: 'user', content: text },
+          ],
+        }),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const translated = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if (translated && translated.trim().length > 10) return translated.trim();
+    } catch (e) {}
   }
+  return text;
 }
 
 async function getSeriesVideos(tmdbId) {
@@ -119,7 +120,7 @@ async function getSeriesVideos(tmdbId) {
         const episodes = seasonData.episodes || [];
         for (const ep of episodes) {
           let overview = ep.overview || '';
-          if (overview.length > 15) {
+          if (overview.length > 12) {
             overview = await translateToPtBR(overview);
           }
           videos.push({
@@ -163,113 +164,3 @@ builder.defineCatalogHandler(async (args) => {
     });
   } else {
     data = await tmdbFetch('/discover/' + cfg.media, {
-      with_origin_country: cfg.country,
-      with_genres: cfg.genre,
-      language: 'en-US',
-      sort_by: 'popularity.desc',
-      page: String(page),
-      include_adult: 'false',
-    });
-  }
-
-  const metas = [];
-  for (const item of (data.results || [])) {
-    const title = cfg.media === 'tv' ? item.name : item.title;
-    const year = (cfg.media === 'tv' ? item.first_air_date : item.release_date || '').slice(0, 4);
-    const tmdbId = String(item.id);
-    const mediaType = cfg.type === 'series' ? 'series' : 'movie';
-
-    // Busca sinopse em pt-BR direto do TMDB
-    let description = '';
-    try {
-      const pt = await tmdbFetch('/' + cfg.media + '/' + tmdbId, { language: 'pt-BR' });
-      description = pt.overview || '';
-    } catch (e) {}
-
-    if (!description || description.length < 20) {
-      description = item.overview || '';
-      if (description.length > 15) {
-        description = await translateToPtBR(description);
-      }
-    }
-
-    metas.push({
-      id: 'tmdb:' + cfg.type + ':' + tmdbId,
-      type: cfg.type,
-      name: title || 'Unknown',
-      poster: buildRpdbPoster('tmdb', mediaType + '-' + tmdbId) || buildPoster(item.poster_path),
-      background: buildBackdrop(item.backdrop_path),
-      description: description,
-      releaseInfo: year || undefined,
-      genres: item.genre_ids ? item.genre_ids.map(String) : [],
-      posterShape: 'poster',
-    });
-  }
-
-  return { metas };
-});
-
-builder.defineMetaHandler(async (args) => {
-  const parts = args.id.split(':');
-  if (parts[0] !== 'tmdb' || parts.length < 3) return { meta: null };
-
-  const type = parts[1];
-  const tmdbId = parts[2];
-  const media = type === 'series' ? 'tv' : 'movie';
-
-  try {
-    const en = await tmdbFetch('/' + media + '/' + tmdbId, {
-      language: 'en-US',
-      append_to_response: 'external_ids,credits',
-    });
-    const pt = await tmdbFetch('/' + media + '/' + tmdbId, { language: 'pt-BR' });
-
-    const title = media === 'tv' ? en.name : en.title;
-    let overview = (pt.overview && pt.overview.length > 20) ? pt.overview : (en.overview || '');
-
-    if (!pt.overview || pt.overview.length < 20) {
-      if (en.overview && en.overview.length > 15) {
-        overview = await translateToPtBR(en.overview);
-      }
-    }
-
-    const year = (media === 'tv' ? en.first_air_date : en.release_date || '').slice(0, 4);
-    const imdbId = en.external_ids && en.external_ids.imdb_id;
-    const runtime = media === 'tv'
-      ? (en.episode_run_time && en.episode_run_time[0] ? en.episode_run_time[0] + ' min' : undefined)
-      : (en.runtime ? en.runtime + ' min' : undefined);
-
-    const mediaType = type === 'series' ? 'series' : 'movie';
-    const poster = imdbId
-      ? buildRpdbPoster('imdb', imdbId)
-      : buildRpdbPoster('tmdb', mediaType + '-' + tmdbId);
-
-    const meta = {
-      id: imdbId || args.id,
-      type: type,
-      name: title || 'Unknown',
-      poster: poster || buildPoster(en.poster_path),
-      background: buildBackdrop(en.backdrop_path),
-      description: overview,
-      releaseInfo: year || undefined,
-      genres: (en.genres || []).map(function (g) { return g.name; }),
-      cast: (en.credits && en.credits.cast ? en.credits.cast.slice(0, 12).map(function (c) { return c.name; }) : []),
-      runtime: runtime,
-      imdbRating: en.vote_average ? en.vote_average.toFixed(1) : undefined,
-    };
-
-    if (type === 'series') {
-      meta.videos = await getSeriesVideos(tmdbId);
-    }
-
-    return { meta };
-  } catch (err) {
-    console.error('Meta error:', err.message);
-    return { meta: null };
-  }
-});
-
-const port = process.env.PORT || 7000;
-serveHTTP(builder.getInterface(), { port: Number(port) });
-
-console.log('Doramas Ásia addon v1.7 running on port ' + port);
