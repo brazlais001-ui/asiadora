@@ -122,4 +122,67 @@ builder.defineCatalogHandler(async (args) => {
       type: cfg.type,
       name: title || 'Unknown',
       poster: buildRpdbPoster('tmdb', mediaType + '-' + tmdbId) || buildPoster(item.poster_path),
-      background: buildBackdrop(
+      background: buildBackdrop(item.backdrop_path),
+      description: item.overview || '',
+      releaseInfo: year || undefined,
+      genres: item.genre_ids ? item.genre_ids.map(String) : [],
+      posterShape: 'poster',
+    };
+  });
+
+  return { metas };
+});
+
+builder.defineMetaHandler(async (args) => {
+  const parts = args.id.split(':');
+  if (parts[0] !== 'tmdb' || parts.length < 3) return { meta: null };
+
+  const type = parts[1];
+  const tmdbId = parts[2];
+  const media = type === 'series' ? 'tv' : 'movie';
+
+  try {
+    const en = await tmdbFetch('/' + media + '/' + tmdbId, {
+      language: 'en-US',
+      append_to_response: 'external_ids,credits',
+    });
+    const pt = await tmdbFetch('/' + media + '/' + tmdbId, { language: 'pt-BR' });
+
+    const title = media === 'tv' ? en.name : en.title;
+    const overview = pt.overview || en.overview || '';
+    const year = (media === 'tv' ? en.first_air_date : en.release_date || '').slice(0, 4);
+    const imdbId = en.external_ids && en.external_ids.imdb_id;
+    const runtime = media === 'tv'
+      ? (en.episode_run_time && en.episode_run_time[0] ? en.episode_run_time[0] + ' min' : undefined)
+      : (en.runtime ? en.runtime + ' min' : undefined);
+
+    const mediaType = type === 'series' ? 'series' : 'movie';
+    const poster = imdbId
+      ? buildRpdbPoster('imdb', imdbId)
+      : buildRpdbPoster('tmdb', mediaType + '-' + tmdbId);
+
+    const meta = {
+      id: imdbId || args.id,
+      type: type,
+      name: title || 'Unknown',
+      poster: poster || buildPoster(en.poster_path),
+      background: buildBackdrop(en.backdrop_path),
+      description: overview,
+      releaseInfo: year || undefined,
+      genres: (en.genres || []).map(g => g.name),
+      cast: (en.credits && en.credits.cast ? en.credits.cast.slice(0, 12).map(c => c.name) : []),
+      runtime: runtime,
+      imdbRating: en.vote_average ? en.vote_average.toFixed(1) : undefined,
+    };
+
+    return { meta };
+  } catch (err) {
+    console.error('Meta error:', err.message);
+    return { meta: null };
+  }
+});
+
+const port = process.env.PORT || 7000;
+serveHTTP(builder.getInterface(), { port: Number(port) });
+
+console.log('Doramas Ásia addon running on port ' + port);
