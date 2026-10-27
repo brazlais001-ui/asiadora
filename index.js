@@ -37,9 +37,9 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.3.0',
+  version: '1.5.0',
   name: 'Doramas Ásia',
-  description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR. Com episódios.',
+  description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
   resources: ['catalog', 'meta'],
   types: ['movie', 'series'],
@@ -79,7 +79,7 @@ function buildRpdbPoster(mediaType, mediaId) {
 }
 
 async function translateToPtBR(text) {
-  if (!text || text.length < 15 || !OPENROUTER_API_KEY) return text;
+  if (!text || text.length < 10 || !OPENROUTER_API_KEY) return text;
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -92,14 +92,15 @@ async function translateToPtBR(text) {
       body: JSON.stringify({
         model: 'google/gemini-2.0-flash-exp:free',
         messages: [
-          { role: 'system', content: 'Traduza o texto para português brasileiro (pt-BR). Responda APENAS com a tradução, sem aspas ou explicações.' },
+          { role: 'system', content: 'Traduza para português brasileiro (pt-BR). Responda APENAS com a tradução, sem aspas ou explicações.' },
           { role: 'user', content: text },
         ],
       }),
     });
     if (!res.ok) return text;
     const data = await res.json();
-    return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content.trim() : text;
+    const translated = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    return translated ? translated.trim() : text;
   } catch (e) {
     return text;
   }
@@ -112,28 +113,29 @@ async function getSeriesVideos(tmdbId) {
     const seasons = show.seasons || [];
 
     for (const season of seasons) {
-      if (season.season_number === 0) continue; // skip specials
+      if (season.season_number === 0) continue;
       try {
         const seasonData = await tmdbFetch('/tv/' + tmdbId + '/season/' + season.season_number, { language: 'en-US' });
         const episodes = seasonData.episodes || [];
         for (const ep of episodes) {
+          let overview = ep.overview || '';
+          if (overview.length > 15) {
+            overview = await translateToPtBR(overview);
+          }
           videos.push({
             id: 'tmdb:series:' + tmdbId + ':' + season.season_number + ':' + ep.episode_number,
             title: ep.name || ('Episode ' + ep.episode_number),
             season: season.season_number,
             episode: ep.episode_number,
             released: ep.air_date ? new Date(ep.air_date + 'T00:00:00Z') : undefined,
-            overview: ep.overview || '',
+            overview: overview,
             thumbnail: ep.still_path ? 'https://image.tmdb.org/t/p/w300' + ep.still_path : undefined,
           });
         }
-      } catch (e) {
-        console.error('Season error:', e.message);
-      }
+      } catch (e) {}
     }
     return videos;
   } catch (e) {
-    console.error('Videos error:', e.message);
     return [];
   }
 }
@@ -170,24 +172,30 @@ builder.defineCatalogHandler(async (args) => {
     });
   }
 
-  const metas = (data.results || []).map(item => {
+  const metas = [];
+  for (const item of (data.results || [])) {
     const title = cfg.media === 'tv' ? item.name : item.title;
     const year = (cfg.media === 'tv' ? item.first_air_date : item.release_date || '').slice(0, 4);
     const tmdbId = String(item.id);
     const mediaType = cfg.type === 'series' ? 'series' : 'movie';
 
-    return {
+    let description = item.overview || '';
+    if (description.length > 15) {
+      description = await translateToPtBR(description);
+    }
+
+    metas.push({
       id: 'tmdb:' + cfg.type + ':' + tmdbId,
       type: cfg.type,
       name: title || 'Unknown',
       poster: buildRpdbPoster('tmdb', mediaType + '-' + tmdbId) || buildPoster(item.poster_path),
       background: buildBackdrop(item.backdrop_path),
-      description: item.overview || '',
+      description: description,
       releaseInfo: year || undefined,
       genres: item.genre_ids ? item.genre_ids.map(String) : [],
       posterShape: 'poster',
-    };
-  });
+    });
+  }
 
   return { metas };
 });
@@ -208,10 +216,13 @@ builder.defineMetaHandler(async (args) => {
     const pt = await tmdbFetch('/' + media + '/' + tmdbId, { language: 'pt-BR' });
 
     const title = media === 'tv' ? en.name : en.title;
-    let overview = (pt.overview && pt.overview.length > 20) ? pt.overview : (en.overview || '');
+    let overview = (pt.overview && pt.overview.length > 30) ? pt.overview : (en.overview || '');
 
-    if ((!pt.overview || pt.overview.length < 20) && en.overview) {
-      overview = await translateToPtBR(en.overview);
+    // Força tradução se a versão pt-BR for curta ou inexistente
+    if (!pt.overview || pt.overview.length < 30) {
+      if (en.overview && en.overview.length > 15) {
+        overview = await translateToPtBR(en.overview);
+      }
     }
 
     const year = (media === 'tv' ? en.first_air_date : en.release_date || '').slice(0, 4);
@@ -253,4 +264,4 @@ builder.defineMetaHandler(async (args) => {
 const port = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: Number(port) });
 
-console.log('Doramas Ásia addon v1.3 running on port ' + port);
+console.log('Doramas Ásia addon v1.5 running on port ' + port);
