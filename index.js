@@ -37,7 +37,7 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.5.0',
+  version: '1.6.0',
   name: 'Doramas Ásia',
   description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
@@ -79,7 +79,7 @@ function buildRpdbPoster(mediaType, mediaId) {
 }
 
 async function translateToPtBR(text) {
-  if (!text || text.length < 10 || !OPENROUTER_API_KEY) return text;
+  if (!text || text.length < 12 || !OPENROUTER_API_KEY) return text;
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -218,7 +218,6 @@ builder.defineMetaHandler(async (args) => {
     const title = media === 'tv' ? en.name : en.title;
     let overview = (pt.overview && pt.overview.length > 30) ? pt.overview : (en.overview || '');
 
-    // Força tradução se a versão pt-BR for curta ou inexistente
     if (!pt.overview || pt.overview.length < 30) {
       if (en.overview && en.overview.length > 15) {
         overview = await translateToPtBR(en.overview);
@@ -264,4 +263,4 @@ builder.defineMetaHandler(async (args) => {
 const port = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: Number(port) });
 
-console.log('Doramas Ásia addon v1.5 running on port ' + port);
+console.log('Doramas Ásia addon v1.6 running on port ' + port);
