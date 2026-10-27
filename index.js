@@ -1,4 +1,3 @@
-
 #!/usr/bin/env node
 
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
