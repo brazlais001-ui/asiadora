@@ -37,9 +37,9 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.2.0',
+  version: '1.3.0',
   name: 'Doramas Ásia',
-  description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
+  description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR. Com episódios.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
   resources: ['catalog', 'meta'],
   types: ['movie', 'series'],
@@ -102,6 +102,39 @@ async function translateToPtBR(text) {
     return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content.trim() : text;
   } catch (e) {
     return text;
+  }
+}
+
+async function getSeriesVideos(tmdbId) {
+  try {
+    const show = await tmdbFetch('/tv/' + tmdbId, { language: 'en-US' });
+    const videos = [];
+    const seasons = show.seasons || [];
+
+    for (const season of seasons) {
+      if (season.season_number === 0) continue; // skip specials
+      try {
+        const seasonData = await tmdbFetch('/tv/' + tmdbId + '/season/' + season.season_number, { language: 'en-US' });
+        const episodes = seasonData.episodes || [];
+        for (const ep of episodes) {
+          videos.push({
+            id: 'tmdb:series:' + tmdbId + ':' + season.season_number + ':' + ep.episode_number,
+            title: ep.name || ('Episode ' + ep.episode_number),
+            season: season.season_number,
+            episode: ep.episode_number,
+            released: ep.air_date ? new Date(ep.air_date + 'T00:00:00Z') : undefined,
+            overview: ep.overview || '',
+            thumbnail: ep.still_path ? 'https://image.tmdb.org/t/p/w300' + ep.still_path : undefined,
+          });
+        }
+      } catch (e) {
+        console.error('Season error:', e.message);
+      }
+    }
+    return videos;
+  } catch (e) {
+    console.error('Videos error:', e.message);
+    return [];
   }
 }
 
@@ -206,6 +239,10 @@ builder.defineMetaHandler(async (args) => {
       imdbRating: en.vote_average ? en.vote_average.toFixed(1) : undefined,
     };
 
+    if (type === 'series') {
+      meta.videos = await getSeriesVideos(tmdbId);
+    }
+
     return { meta };
   } catch (err) {
     console.error('Meta error:', err.message);
@@ -216,4 +253,4 @@ builder.defineMetaHandler(async (args) => {
 const port = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: Number(port) });
 
-console.log('Doramas Ásia addon v1.2 running on port ' + port);
+console.log('Doramas Ásia addon v1.3 running on port ' + port);
