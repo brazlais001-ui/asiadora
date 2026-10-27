@@ -4,7 +4,6 @@ const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const RPDB_API_KEY = process.env.RPDB_API_KEY;
-const TORBOX_API_KEY = process.env.TORBOX_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 if (!TMDB_API_KEY) {
@@ -38,7 +37,7 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.1.1',
+  version: '1.2.0',
   name: 'Doramas Ásia',
   description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
@@ -62,7 +61,7 @@ async function tmdbFetch(path, params = {}) {
     if (v != null) url.searchParams.set(k, v);
   });
   const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`TMDB error ${res.status}`);
+  if (!res.ok) throw new Error('TMDB error ' + res.status);
   return res.json();
 }
 
@@ -79,11 +78,38 @@ function buildRpdbPoster(mediaType, mediaId) {
   return RPDB_BASE + '/' + RPDB_API_KEY + '/' + mediaType + '/poster-default/' + mediaId + '.jpg?fallback=true';
 }
 
+async function translateToPtBR(text) {
+  if (!text || text.length < 15 || !OPENROUTER_API_KEY) return text;
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://stremio.com',
+        'X-Title': 'Doramas Addon',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.0-flash-exp:free',
+        messages: [
+          { role: 'system', content: 'Traduza o texto para português brasileiro (pt-BR). Responda APENAS com a tradução, sem aspas ou explicações.' },
+          { role: 'user', content: text },
+        ],
+      }),
+    });
+    if (!res.ok) return text;
+    const data = await res.json();
+    return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content.trim() : text;
+  } catch (e) {
+    return text;
+  }
+}
+
 builder.defineCatalogHandler(async (args) => {
   const cfg = CATALOGS_CONFIG[args.id];
   if (!cfg) return { metas: [] };
 
-  const skip = parseInt(args.extra && args.extra.skip ? args.extra.skip : '0', 10);
+  const skip = parseInt((args.extra && args.extra.skip) || '0', 10);
   const page = Math.floor(skip / 20) + 1;
   const search = args.extra && args.extra.search;
 
@@ -114,7 +140,7 @@ builder.defineCatalogHandler(async (args) => {
   const metas = (data.results || []).map(item => {
     const title = cfg.media === 'tv' ? item.name : item.title;
     const year = (cfg.media === 'tv' ? item.first_air_date : item.release_date || '').slice(0, 4);
-    const tmdbId = item.id;
+    const tmdbId = String(item.id);
     const mediaType = cfg.type === 'series' ? 'series' : 'movie';
 
     return {
@@ -149,7 +175,12 @@ builder.defineMetaHandler(async (args) => {
     const pt = await tmdbFetch('/' + media + '/' + tmdbId, { language: 'pt-BR' });
 
     const title = media === 'tv' ? en.name : en.title;
-    const overview = pt.overview || en.overview || '';
+    let overview = (pt.overview && pt.overview.length > 20) ? pt.overview : (en.overview || '');
+
+    if ((!pt.overview || pt.overview.length < 20) && en.overview) {
+      overview = await translateToPtBR(en.overview);
+    }
+
     const year = (media === 'tv' ? en.first_air_date : en.release_date || '').slice(0, 4);
     const imdbId = en.external_ids && en.external_ids.imdb_id;
     const runtime = media === 'tv'
@@ -169,8 +200,8 @@ builder.defineMetaHandler(async (args) => {
       background: buildBackdrop(en.backdrop_path),
       description: overview,
       releaseInfo: year || undefined,
-      genres: (en.genres || []).map(g => g.name),
-      cast: (en.credits && en.credits.cast ? en.credits.cast.slice(0, 12).map(c => c.name) : []),
+      genres: (en.genres || []).map(function (g) { return g.name; }),
+      cast: (en.credits && en.credits.cast ? en.credits.cast.slice(0, 12).map(function (c) { return c.name; }) : []),
       runtime: runtime,
       imdbRating: en.vote_average ? en.vote_average.toFixed(1) : undefined,
     };
@@ -185,4 +216,4 @@ builder.defineMetaHandler(async (args) => {
 const port = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: Number(port) });
 
-console.log('Doramas Ásia addon running on port ' + port);
+console.log('Doramas Ásia addon v1.2 running on port ' + port);
