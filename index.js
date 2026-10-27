@@ -37,7 +37,7 @@ const catalogs = Object.entries(CATALOGS_CONFIG).map(([id, cfg]) => ({
 
 const manifest = {
   id: 'com.grok.doramas',
-  version: '1.6.0',
+  version: '1.7.0',
   name: 'Doramas Ásia',
   description: 'Catálogos de doramas chineses, coreanos e japoneses. Títulos em inglês, sinopses em pt-BR.',
   logo: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg',
@@ -179,9 +179,18 @@ builder.defineCatalogHandler(async (args) => {
     const tmdbId = String(item.id);
     const mediaType = cfg.type === 'series' ? 'series' : 'movie';
 
-    let description = item.overview || '';
-    if (description.length > 15) {
-      description = await translateToPtBR(description);
+    // Busca sinopse em pt-BR direto do TMDB
+    let description = '';
+    try {
+      const pt = await tmdbFetch('/' + cfg.media + '/' + tmdbId, { language: 'pt-BR' });
+      description = pt.overview || '';
+    } catch (e) {}
+
+    if (!description || description.length < 20) {
+      description = item.overview || '';
+      if (description.length > 15) {
+        description = await translateToPtBR(description);
+      }
     }
 
     metas.push({
@@ -216,9 +225,9 @@ builder.defineMetaHandler(async (args) => {
     const pt = await tmdbFetch('/' + media + '/' + tmdbId, { language: 'pt-BR' });
 
     const title = media === 'tv' ? en.name : en.title;
-    let overview = (pt.overview && pt.overview.length > 30) ? pt.overview : (en.overview || '');
+    let overview = (pt.overview && pt.overview.length > 20) ? pt.overview : (en.overview || '');
 
-    if (!pt.overview || pt.overview.length < 30) {
+    if (!pt.overview || pt.overview.length < 20) {
       if (en.overview && en.overview.length > 15) {
         overview = await translateToPtBR(en.overview);
       }
@@ -263,4 +272,4 @@ builder.defineMetaHandler(async (args) => {
 const port = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: Number(port) });
 
-console.log('Doramas Ásia addon v1.6 running on port ' + port);
+console.log('Doramas Ásia addon v1.7 running on port ' + port);
